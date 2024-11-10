@@ -1,0 +1,51 @@
+#!/bin/bash
+
+set -e
+
+# Load environment variables
+source .env
+
+check_anki_running() {
+    if ! pgrep -x "Anki" > /dev/null; then
+        echo "Anki is not running, launching: "
+        anki &
+        return 0
+    fi
+}
+
+# Récupérer le fichier depuis Outline
+get_file_from_outline() {
+    echo "Fetching document from Outline..."
+
+    local response=$(curl -s -X POST "$OUTLINE_URL" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $OUTLINE_API_KEY" \
+        -d '{"id":"'"$DOCUMENT_ID"'"}')
+
+    if [[ $(echo "$response" | jq '.status') != 200 ]]; then
+        echo "Error while getting the file from Outline"
+        exit 1
+    fi
+
+    local data=$(echo "$response" | jq -r '.data')
+
+    echo "$data" > /tmp/anki_file.txt
+
+    # Compare with the existing file
+    if [[ -f "$DOCUMENT_PATH" ]] && cmp -s /tmp/anki_file.txt "$DOCUMENT_PATH"; then
+        echo "No change in the file"
+    else
+        echo "Updating the file..."
+        echo "$data" > "$DOCUMENT_PATH"
+
+        check_anki_running
+
+        # Import into Anki
+        local import_response=$(curl -s -X POST -d '{"action":"guiImportFile","params":{"path":"'"$DOCUMENT_PATH"'"},"version":6}' http://127.0.0.1:8765)
+        echo "Import result: $(echo "$import_response" | jq '.result')"
+    fi
+}
+
+# Exécuter les fonctions
+
+get_file_from_outline
